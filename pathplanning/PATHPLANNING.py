@@ -1,4 +1,5 @@
 import cv2
+import struct
 def detectar_camara_valida():
     print("🔍 Buscando cámara externa (no la integrada)...")
 
@@ -234,25 +235,18 @@ import socket
 class ObstacleAvoidanceNavigation(ObjectDetector):
     def enviar_control_por_socket(self, velocidad, angulo, x, y, theta):
         try:
+            import math
             if not hasattr(self, 'sock_ctrl'):
                 self.sock_ctrl = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.destino_ctrl = ("<DIRECCION_IP_PI>", 5051)  # Cambiar por IP real de la Raspberry
-            datos = {
-                "velocidad": velocidad,
-                "angulo_direccion": angulo,
-                "x": x,
-                "y": y,
-                "theta": theta
-            }
-            mensaje = pickle.dumps(datos)
-            self.sock_ctrl.sendto(mensaje, self.destino_ctrl)
+                self.destino_ctrl = ("172.20.10.10", 8888)  # Puerto del nodo ROS2 receptor
 
-            # Impresión detallada del estado actual y control
-            print("\n📤 Enviando datos de control al robot:")
-            print(f"  🔸 Posición     → x: {x:.2f}, y: {y:.2f}")
-            print(f"  🔸 Orientación  → θ (rad): {theta:.2f} | θ (deg): {math.degrees(theta):.2f}")
-            print(f"  🔸 Velocidad    → v = {velocidad:.2f}")
-            print(f"  🔸 Dirección    → ángulo = {math.degrees(angulo):.2f}°\n")
+            # Formato de mensaje compatible con el nodo TrayectoriaFollower
+            mensaje = f"v={velocidad:.2f}, θ={math.degrees(angulo):.2f}°"
+            self.sock_ctrl.sendto(mensaje.encode('utf-8'), self.destino_ctrl)
+
+            print("\n📤 Enviando datos de control al robot (ROS2 receptor):")
+            print(f"  🔸 Mensaje: {mensaje}")
+            print(f"  🔸 Posición: x={x:.2f}, y={y:.2f}, θ(rad)={theta:.2f}")
 
         except Exception as e:
             print(f"⚠️ Error al enviar datos de control por socket: {e}")
@@ -754,7 +748,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
 
             if not hasattr(self, 'sock'):
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.destino = ("<DIRECCION_IP_PI>", 5050)
+                self.destino = ("172.20.10.10", 5050)
 
             size = struct.pack("!I", len(data))
             self.sock.sendto(size + data, self.destino)
