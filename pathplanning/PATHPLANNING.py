@@ -758,16 +758,12 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
                 "waypoints": self.waypoints,
                 "contours": [cv2.boundingRect(c) for c in self.active_contours] if self.active_contours else []
             }
-
             payload = pickle.dumps(data_dict)
-
             if not hasattr(self, 'sock'):
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.destino = ("172.20.10.10", 5050)
-
             size = struct.pack("!I", len(payload))
             self.sock.sendto(size + payload, self.destino)
-
         except Exception as e:
             print(f"⚠️ Error al enviar datos pickle por socket: {e}")
 
