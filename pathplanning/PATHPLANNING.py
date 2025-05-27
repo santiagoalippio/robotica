@@ -1,10 +1,29 @@
 import cv2
+def detectar_camara_valida():
+    print("🔍 Buscando cámara externa (no la integrada)...")
+
+    for i in [2, 1]:  # Evitar usar cámara 0 (Mac integrada)
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None and frame.shape[0] > 0 and frame.shape[1] > 0:
+                print(f"✅ Cámara externa {i} está funcionando.")
+                cap.release()
+                return i
+            else:
+                print(f"⚠️ Cámara {i} abierta, pero sin imagen válida.")
+            cap.release()
+        else:
+            print(f"❌ Cámara {i} no se pudo abrir.")
+    return -1  # Ninguna cámara válida encontrada
 import numpy as np
 import os
 import math
 import heapq
 import time
 import traceback
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 # --- Constantes y Parámetros para la Navegación ---
 GRID_CELL_SIZE = 20
@@ -93,46 +112,15 @@ class ObjectDetector:
         cv2.imshow(self.controls_window_name, control_image)
         self._windows_set_up = True
 
-    def detectar_camara_valida():
-        print("🔍 Buscando cámara válida...")
-
-        for i in range(3):
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret and frame is not None and frame.shape[0] > 0 and frame.shape[1] > 0:
-                    print(f"✅ Cámara {i} está funcionando.")
-                    cap.release()
-                    return i
-                else:
-                    print(f"⚠️ Cámara {i} abierta, pero sin imagen válida.")
-                cap.release()
-            else:
-                print(f"❌ Cámara {i} no se pudo abrir.")
-        return -1  # Ninguna cámara válida encontrada
-
     def start_camera(self):
         print(f"{time.time():.4f}: Entrando a start_camera")
         t_method_start = time.time()
 
-        """
-        print(f"{time.time():.4f}: Intentando abrir cámara 1 con backend DSHOW (si aplica)...")
-        cap_attempt = cv2.VideoCapture(1 + cv2.CAP_DSHOW) # Para Windows, usa índice 1
-
-        if not cap_attempt.isOpened():
-            print(f"{time.time():.4f}: WARN: Falló abrir cámara 1 con DSHOW. Intentando backend por defecto...")
-            cap_attempt = cv2.VideoCapture(1)
-        """
-        camera_index = detectar_camara_valida()
-        if camera_index == -1:
-            print("❌ No se encontró ninguna cámara válida.")
-            return False
-        cap_attempt = cv2.VideoCapture(camera_index)
-        
-        self.cap = cap_attempt
-        
+        camera_index = 0  # Forzar índice de cámara USB externa; cambia a 1 si corresponde
+        print(f"🔧 Forzando uso de cámara índice {camera_index}")
+        self.cap = cv2.VideoCapture(camera_index)
         if not self.cap.isOpened():
-            print(f"{time.time():.4f}: ❌ Error: No se pudo abrir la cámara (índice {camera_index}).")
+            print(f"{time.time():.4f}: ❌ No se pudo abrir la cámara externa (índice {camera_index}).")
             return False
         print(f"{time.time():.4f}: ✅ Cámara (índice {camera_index}) abierta. Tiempo para abrir: {time.time() - t_method_start:.4f}s")
 
@@ -240,7 +228,34 @@ class ObjectDetector:
             cv2.setTrackbarPos("Blur Kernel",self.controls_window_name,self.params['blur_kernel']);cv2.setTrackbarPos("Threshold",self.controls_window_name,self.params['threshold_value']);cv2.setTrackbarPos("Min Area",self.controls_window_name,self.params['min_area']);cv2.setTrackbarPos("Max Area",self.controls_window_name,self.params['max_area']//10);cv2.setTrackbarPos("Aspect Min x10",self.controls_window_name,int(self.params['aspect_ratio_min']*10));cv2.setTrackbarPos("Aspect Max x10",self.controls_window_name,int(self.params['aspect_ratio_max']*10));cv2.setTrackbarPos("Morph Kernel",self.controls_window_name,self.params['morph_kernel']);cv2.setTrackbarPos("Morph Iter",self.controls_window_name,self.params['morph_iterations'])
         self._trigger_reprocess(replan=True);print("Parámetros de detección de obstáculos reseteados.")
 
+import pickle
+import socket
+
 class ObstacleAvoidanceNavigation(ObjectDetector):
+    def enviar_control_por_socket(self, velocidad, angulo, x, y, theta):
+        try:
+            if not hasattr(self, 'sock_ctrl'):
+                self.sock_ctrl = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.destino_ctrl = ("<DIRECCION_IP_PI>", 5051)  # Cambiar por IP real de la Raspberry
+            datos = {
+                "velocidad": velocidad,
+                "angulo_direccion": angulo,
+                "x": x,
+                "y": y,
+                "theta": theta
+            }
+            mensaje = pickle.dumps(datos)
+            self.sock_ctrl.sendto(mensaje, self.destino_ctrl)
+
+            # Impresión detallada del estado actual y control
+            print("\n📤 Enviando datos de control al robot:")
+            print(f"  🔸 Posición     → x: {x:.2f}, y: {y:.2f}")
+            print(f"  🔸 Orientación  → θ (rad): {theta:.2f} | θ (deg): {math.degrees(theta):.2f}")
+            print(f"  🔸 Velocidad    → v = {velocidad:.2f}")
+            print(f"  🔸 Dirección    → ángulo = {math.degrees(angulo):.2f}°\n")
+
+        except Exception as e:
+            print(f"⚠️ Error al enviar datos de control por socket: {e}")
     def __init__(self):
         t_init_start = time.time()
         print(f"{t_init_start:.4f}: ObstacleAvoidanceNavigation __init__ - INICIO")
@@ -557,32 +572,51 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
 
     def navigate_step(self):
         if not self.waypoints or self.current_waypoint_index >= len(self.waypoints) or self.planning_in_progress or not self.robot_pose_visually_confirmed: 
-            self.current_mov_dir = 0; return
+            self.current_mov_dir = 0
+            return
         target_wp = self.waypoints[self.current_waypoint_index]
-        if self.heuristic((self.robot_x,self.robot_y),target_wp) < GRID_CELL_SIZE*0.75: 
-            self.current_waypoint_index+=1
-            if self.current_waypoint_index>=len(self.waypoints): self.current_mov_dir=0; return 
-            target_wp=self.waypoints[self.current_waypoint_index]
-        p1 = self.current_path_origin if self.current_waypoint_index==0 else self.waypoints[self.current_waypoint_index-1]
-        p2 = target_wp; dx_p,dy_p=p2[0]-p1[0],p2[1]-p1[1]
-        path_ang=math.atan2(dy_p,dx_p); head_err=self.normalize_angle(path_ang-self.robot_theta)
-        cte_n=dx_p*(p1[1]-self.robot_y)-(p1[0]-self.robot_x)*dy_p
-        path_len_sq=dx_p**2+dy_p**2; cte=0
-        if path_len_sq>(1e-3)**2: cte=cte_n/math.sqrt(path_len_sq)
-        steer_cte=math.atan2(self.K_cte_stanley*cte,ROBOT_VELOCITY+1e-5)
-        self.current_steer_angle=np.clip(head_err+steer_cte,-ROBOT_MAX_STEER_ANGLE,ROBOT_MAX_STEER_ANGLE)
-        self.current_mov_dir=1; v=ROBOT_VELOCITY*self.current_mov_dir; phi=self.current_steer_angle
-        dx_r,dy_r=v*math.cos(self.robot_theta)*SIM_DT,v*math.sin(self.robot_theta)*SIM_DT
-        dth_r=(v/ROBOT_WHEELBASE)*math.tan(phi)*SIM_DT if abs(ROBOT_WHEELBASE)>1e-3 else 0
-        px,py=self.robot_x+dx_r,self.robot_y+dy_r; pth=self.normalize_angle(self.robot_theta+dth_r)
-        coll=False
+        if self.heuristic((self.robot_x, self.robot_y), target_wp) < GRID_CELL_SIZE * 0.75:
+            self.current_waypoint_index += 1
+            if self.current_waypoint_index >= len(self.waypoints):
+                self.current_mov_dir = 0
+                return
+            target_wp = self.waypoints[self.current_waypoint_index]
+        p1 = self.current_path_origin if self.current_waypoint_index == 0 else self.waypoints[self.current_waypoint_index - 1]
+        p2 = target_wp
+        dx_p, dy_p = p2[0] - p1[0], p2[1] - p1[1]
+        path_ang = math.atan2(dy_p, dx_p)
+        head_err = self.normalize_angle(path_ang - self.robot_theta)
+        cte_n = dx_p * (p1[1] - self.robot_y) - (p1[0] - self.robot_x) * dy_p
+        path_len_sq = dx_p ** 2 + dy_p ** 2
+        cte = 0
+        if path_len_sq > (1e-3) ** 2:
+            cte = cte_n / math.sqrt(path_len_sq)
+        steer_cte = math.atan2(self.K_cte_stanley * cte, ROBOT_VELOCITY + 1e-5)
+        self.current_steer_angle = np.clip(head_err + steer_cte, -ROBOT_MAX_STEER_ANGLE, ROBOT_MAX_STEER_ANGLE)
+        self.current_mov_dir = 1
+        v = ROBOT_VELOCITY * self.current_mov_dir
+        phi = self.current_steer_angle
+        dx_r, dy_r = v * math.cos(self.robot_theta) * SIM_DT, v * math.sin(self.robot_theta) * SIM_DT
+        dth_r = (v / ROBOT_WHEELBASE) * math.tan(phi) * SIM_DT if abs(ROBOT_WHEELBASE) > 1e-3 else 0
+        px, py = self.robot_x + dx_r, self.robot_y + dy_r
+        pth = self.normalize_angle(self.robot_theta + dth_r)
+        coll = False
         if self.active_contours:
             for obs_c in self.active_contours:
-                if cv2.pointPolygonTest(obs_c,(px,py),True)>-(ROBOT_RADIUS*0.8): coll=True; break
-        if coll: print("¡Colisión Kinematica!"); self.current_mov_dir=0; self.waypoints=[]; self.path_found=False
+                if cv2.pointPolygonTest(obs_c, (px, py), True) > -(ROBOT_RADIUS * 0.8):
+                    coll = True
+                    break
+        if coll:
+            print("¡Colisión Kinematica!")
+            self.current_mov_dir = 0
+            self.waypoints = []
+            self.path_found = False
         else:
-            self.robot_x,self.robot_y,self.robot_theta=px,py,pth
-            if not self.robot_path_history or self.heuristic(self.robot_path_history[-1],(px,py))>ROBOT_RADIUS*0.2: self.robot_path_history.append((int(px),int(py)))
+            self.robot_x, self.robot_y, self.robot_theta = px, py, pth
+            if not self.robot_path_history or self.heuristic(self.robot_path_history[-1], (px, py)) > ROBOT_RADIUS * 0.2:
+                self.robot_path_history.append((int(px), int(py)))
+            # Enviar datos de control por socket
+            self.enviar_control_por_socket(v, self.current_steer_angle, self.robot_x, self.robot_y, self.robot_theta)
     
     def perform_detection_and_draw_elements(self, replan=False):
         if self.original_image is None:
@@ -691,8 +725,6 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
         self.generar_plot_y_enviar()
 
 
-    import matplotlib.pyplot as plt
-    from io import BytesIO
     def generar_plot_y_enviar(self):
         try:
             fig, ax = plt.subplots(figsize=(6, 6))
