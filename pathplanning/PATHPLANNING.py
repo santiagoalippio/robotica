@@ -1,28 +1,13 @@
 import cv2
 import struct
-def detectar_camara_valida():
-    print("🔍 Buscando cámara externa (no la integrada)...")
-
-    for i in [2, 1]:  # Evitar usar cámara 0 (Mac integrada)
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            if ret and frame is not None and frame.shape[0] > 0 and frame.shape[1] > 0:
-                print(f"✅ Cámara externa {i} está funcionando.")
-                cap.release()
-                return i
-            else:
-                print(f"⚠️ Cámara {i} abierta, pero sin imagen válida.")
-            cap.release()
-        else:
-            print(f"❌ Cámara {i} no se pudo abrir.")
-    return -1  # Ninguna cámara válida encontrada
 import numpy as np
 import os
 import math
 import heapq
 import time
 import traceback
+import socket
+import pickle
 import matplotlib.pyplot as plt
 from io import BytesIO
 
@@ -42,7 +27,11 @@ class MissionStage:
     GOING_TO_DROPOFF = 2
     MISSION_COMPLETE = 3
 
+
+# --- Funciones de Utilidad ---
 class ObjectDetector:
+    
+    # Funciones de inicialización y configuración
     def __init__(self):
         self.image = None
         self.original_image = None
@@ -57,7 +46,8 @@ class ObjectDetector:
         }
         self.cap = None
         self._windows_set_up = False
-
+        
+    # Funciones de actualización de parámetros
     def _update_max_area_from_trackbar(self, val):
         self.params['max_area'] = val * 10; self._trigger_reprocess(replan=True)
     def update_blur_kernel(self, val):
@@ -75,6 +65,7 @@ class ObjectDetector:
     def update_morph_iterations(self, val):
         self.params['morph_iterations'] = val; self._trigger_reprocess(replan=True)
 
+    # Función para re-procesar la imagen y actualizar la visualización
     def _trigger_reprocess(self, replan=False):
         if hasattr(self, 'perform_detection_and_draw_elements') and callable(getattr(self, 'perform_detection_and_draw_elements')):
             self.perform_detection_and_draw_elements(replan=replan)
@@ -83,6 +74,7 @@ class ObjectDetector:
             if self.processed_image_base is not None:
                  cv2.imshow(self.window_name, self.processed_image_base)
 
+    # Función de configuración de ventanas y trackbars
     def setup_windows_and_trackbars(self):
         if self._windows_set_up:
             return
@@ -113,6 +105,26 @@ class ObjectDetector:
         cv2.imshow(self.controls_window_name, control_image)
         self._windows_set_up = True
 
+    # Función para detectar una cámara válida
+    def detectar_camara_valida(self):
+        print("🔍 Buscando cámara externa (no la integrada)...")
+
+        for i in [2, 1]:  # Evitar usar cámara 0 (Mac integrada)
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None and frame.shape[0] > 0 and frame.shape[1] > 0:
+                    print(f"✅ Cámara externa {i} está funcionando.")
+                    cap.release()
+                    return i
+                else:
+                    print(f"⚠️ Cámara {i} abierta, pero sin imagen válida.")
+                cap.release()
+            else:
+                print(f"❌ Cámara {i} no se pudo abrir.")
+        return -1  # Ninguna cámara válida encontrada
+
+    # Función para iniciar la cámara
     def start_camera(self):
         print(f"{time.time():.4f}: Entrando a start_camera")
         t_method_start = time.time()
@@ -185,6 +197,7 @@ class ObjectDetector:
         print(f"{time.time():.4f}: Saliendo de start_camera (total en método: {time.time() - t_method_start:.4f}s)")
         return True
 
+    # Función para procesar la imagen y detectar objetos
     def process_image_core(self, image_to_process=None):
         if image_to_process is None:
             if self.image is None:
@@ -219,20 +232,22 @@ class ObjectDetector:
             self.active_contours.append(c)
         self.processed_image_base = res_img
 
+    # Función para guardar el resultado de la detección
     def save_result(self, img, fname="result_navigation.jpg"):
         if img is not None: cv2.imwrite(fname, img); print(f"Resultado guardado como {fname}")
         else: print("No hay imagen para guardar.")
 
+    # Función para resetear los parámetros de detección
     def reset_detection_parameters(self):
         self.params.update({'blur_kernel':1,'threshold_value':68,'min_area':100,'max_area':20000,'aspect_ratio_min':0.0,'aspect_ratio_max':9.6,'morph_kernel':3,'morph_iterations':3})
         if self._windows_set_up:
             cv2.setTrackbarPos("Blur Kernel",self.controls_window_name,self.params['blur_kernel']);cv2.setTrackbarPos("Threshold",self.controls_window_name,self.params['threshold_value']);cv2.setTrackbarPos("Min Area",self.controls_window_name,self.params['min_area']);cv2.setTrackbarPos("Max Area",self.controls_window_name,self.params['max_area']//10);cv2.setTrackbarPos("Aspect Min x10",self.controls_window_name,int(self.params['aspect_ratio_min']*10));cv2.setTrackbarPos("Aspect Max x10",self.controls_window_name,int(self.params['aspect_ratio_max']*10));cv2.setTrackbarPos("Morph Kernel",self.controls_window_name,self.params['morph_kernel']);cv2.setTrackbarPos("Morph Iter",self.controls_window_name,self.params['morph_iterations'])
         self._trigger_reprocess(replan=True);print("Parámetros de detección de obstáculos reseteados.")
 
-import pickle
-import socket
-
+# --- Clase Principal de Navegación y Detección de Obstáculos ---
 class ObstacleAvoidanceNavigation(ObjectDetector):
+    
+    # Función para enviar datos de control al robot a través de un socket
     def enviar_control_por_socket(self, velocidad, angulo, x, y, theta):
         try:
             import math
@@ -250,6 +265,8 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
 
         except Exception as e:
             print(f"⚠️ Error al enviar datos de control por socket: {e}")
+    
+    # Constructor de la clase ObstacleAvoidanceNavigation
     def __init__(self):
         t_init_start = time.time()
         print(f"{t_init_start:.4f}: ObstacleAvoidanceNavigation __init__ - INICIO")
@@ -319,6 +336,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
     recibir desde el nodo llamado trayectoria_publisher desde la rasberry pi en ros. En el formato mas conveniente.
     """
 
+    # Función para establecer el punto de entrega (drop-off)
     def set_dropoff_point(self, point):
         self.dropoff_point = point
         max_h, max_w = 480, 640 
@@ -328,7 +346,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
         safe_y = max(GRID_CELL_SIZE, min(point[1], max_h - GRID_CELL_SIZE))
         self.dropoff_point = (int(safe_x), int(safe_y))
     
-
+    # Función para encontrar el centro de un marcador de color específico
     def _find_color_marker_center(self, hsv_image, lower_hsv, upper_hsv):
         mask = cv2.inRange(hsv_image, lower_hsv, upper_hsv); mask = cv2.erode(mask, None, iterations=1); mask = cv2.dilate(mask, None, iterations=2)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -339,6 +357,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
         if M["m00"] != 0: return (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])), best_contour
         return None, None
 
+    # Función para detectar los marcadores del robot y su pose
     def detect_robot_markers_and_pose(self, image_to_process):
         if image_to_process is None: self.robot_pose_visually_confirmed = False; return False
         hsv = cv2.cvtColor(image_to_process, cv2.COLOR_BGR2HSV)
@@ -359,7 +378,8 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
                 else: self.robot_path_history.append(current_robot_pos_for_history)
             return True
         else: self.robot_pose_visually_confirmed = False; return False
-            
+    
+    # Función para encontrar el obstáculo con la mayor diferencia de lados        
     def find_obstacle_with_max_side_difference(self):
         if not self.active_contours or not self.robot_pose_visually_confirmed:
             self.last_known_obstacle_target_for_drawing = None
@@ -391,6 +411,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
         self.target_obstacle_info = target_obstacle
         return target_obstacle
 
+    # Función de callback del mouse para manejar eventos de clic derecho
     def mouse_callback(self, event, x, y, flags, param):
         if self.image is None: return
         if event == cv2.EVENT_RBUTTONDOWN:
@@ -405,6 +426,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
             else:
                 print(f"Meta MANUAL ({x},{y}), esperando detección robot."); self.perform_detection_and_draw_elements(replan=False)
 
+    # Función para construir el mapa de cuadrícula basado en los contornos activos
     def build_grid_map(self):
         if self.original_image is None: self.grid_map=None; self.dist_transform_map_grid=None; return
         h, w = self.original_image.shape[:2]
@@ -421,12 +443,14 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
             self.dist_transform_map_grid=cv2.distanceTransform(np.where(self.grid_map==1,0,255).astype(np.uint8),cv2.DIST_L2,5)
         else: self.dist_transform_map_grid=None
 
+    # Función para calcular la distancia al obstáculo más cercano desde un punto dado
     def heuristic(self,a,b): return math.sqrt((a[0]-b[0])**2+(a[1]-b[1])**2)
     def normalize_angle(self,angle): 
         while angle > math.pi: angle -= 2*math.pi
         while angle < -math.pi: angle += 2*math.pi
         return angle
-        
+    
+    # Función para suavizar la trayectoria de los waypoints    
     def smooth_path(self, waypoints, max_turn_deg, chamfer_factor):
         if not waypoints or len(waypoints)<2: return list(waypoints)
         valid_wps=[(float(wp[0]),float(wp[1])) for wp in waypoints if isinstance(wp,(list,tuple)) and len(wp)==2 and all(isinstance(c,(int,float)) for c in wp)]
@@ -458,6 +482,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
                     if self.heuristic(final_path[-1],new_path[k])>0.1: final_path.append(new_path[k])
         return final_path
 
+    # Función para encontrar una celda accesible cercana a un punto dado
     def _find_accessible_cell(self, point_px, point_name="point", search_radius_cells=5):
         if self.grid_map is None: print(f"ERROR ({point_name}): grid_map no disponible."); return None
         point_g=(point_px[1]//GRID_CELL_SIZE,point_px[0]//GRID_CELL_SIZE)
@@ -478,6 +503,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
                         return (ng[1]*GRID_CELL_SIZE+GRID_CELL_SIZE//2,ng[0]*GRID_CELL_SIZE+GRID_CELL_SIZE//2)
         print(f"ERROR ({point_name}): No halló celda vecina para {point_px} (radio {search_radius_cells})."); return None
 
+    # Función para planificar la ruta usando A*
     def plan_path_astar(self):
         if not self.start_point or not self.goal_point or self.grid_map is None or not self.robot_pose_visually_confirmed:
             self.waypoints=[]; self.path_found=False; self.planning_in_progress=False; return
@@ -525,6 +551,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
         else: self.waypoints=[]; self.path_found=False; print(f"A* no pudo encontrar ruta de {self.start_point} a {self.goal_point}")
         self.planning_in_progress=False
 
+    # Función para generar una ruta para visualización (nuevo método)
     def generate_path_for_visualization(self, start_pixel_coords, goal_pixel_coords): # NUEVO METODO
         if not start_pixel_coords or not goal_pixel_coords or self.grid_map is None: return []
         preview_start_adj = self._find_accessible_cell(start_pixel_coords, "preview_start_vis")
@@ -564,6 +591,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
             return self.smooth_path(raw_wps,self.SMOOTHING_MAX_TURN_DEG,self.SMOOTHING_CHAMFER_FACTOR)
         return []
 
+    # Función para navegar un paso en la ruta planificada
     def navigate_step(self):
         if not self.waypoints or self.current_waypoint_index >= len(self.waypoints) or self.planning_in_progress or not self.robot_pose_visually_confirmed: 
             self.current_mov_dir = 0
@@ -612,6 +640,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
             # Enviar datos de control por socket
             self.enviar_control_por_socket(v, self.current_steer_angle, self.robot_x, self.robot_y, self.robot_theta)
     
+    # Función para enviar datos de control por socket (placeholder, debe implementarse)
     def perform_detection_and_draw_elements(self, replan=False):
         if self.original_image is None:
             h_ph,w_ph = getattr(self.image, 'shape', (480,640,3))[:2]
@@ -718,46 +747,27 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
         # Enviar imagen procesada por socket UDP
         self.generar_plot_y_enviar()
 
-
+    # Función para generar y enviar datos relevantes por socket UDP usando pickle
     def generar_plot_y_enviar(self):
         try:
-            fig, ax = plt.subplots(figsize=(6, 6))
-            ax.set_title("Mapa de Trayectoria")
-            ax.set_xlim(0, 640)
-            ax.set_ylim(480, 0)
-            ax.set_aspect('equal')
-
-            if self.robot_path_history:
-                xs, ys = zip(*self.robot_path_history)
-                ax.plot(xs, ys, color='orange', linewidth=2, label='Ruta del robot')
-
-            if self.dropoff_point:
-                ax.plot(*self.dropoff_point, 'ro', label='Dropoff')
-
-            for cnt in self.active_contours:
-                x, y, w, h = cv2.boundingRect(cnt)
-                rect = plt.Rectangle((x, y), w, h, linewidth=1, edgecolor='black', facecolor='gray', alpha=0.4)
-                ax.add_patch(rect)
-
-            ax.legend()
-
-            buf = BytesIO()
-            plt.savefig(buf, format='jpg')
-            buf.seek(0)
-            data = buf.read()
-
+            # Generar estructura de datos con información relevante
+            data_dict = {
+                "robot_pose": [self.robot_x, self.robot_y, self.robot_theta],
+                "dropoff_point": self.dropoff_point,
+                "robot_path_history": self.robot_path_history,
+                "waypoints": self.waypoints,
+                "contours": [cv2.boundingRect(c) for c in self.active_contours] if self.active_contours else []
+            }
+            payload = pickle.dumps(data_dict)
             if not hasattr(self, 'sock'):
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.destino = ("172.20.10.10", 5050)
-
-            size = struct.pack("!I", len(data))
-            self.sock.sendto(size + data, self.destino)
-            buf.close()
-            plt.close(fig)
-
+            size = struct.pack("!I", len(payload))
+            self.sock.sendto(size + payload, self.destino)
         except Exception as e:
-            print(f"⚠️ Error al enviar el plot: {e}")
+            print(f"⚠️ Error al enviar datos pickle por socket: {e}")
 
+    # Función para enviar datos de control por socket (placeholder, debe implementarse)
     def run(self):
         print(f"{time.time():.4f}: Entrando a app.run()")
         try:
@@ -792,6 +802,7 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
             if os.name!='nt': cv2.waitKey(1)
             print(f"{time.time():.4f}: Programa finalizado.")
 
+# --- Main ---
 if __name__ == "__main__":
     print(f"{time.time():.4f}: Script iniciado.")
     app = ObstacleAvoidanceNavigation()
