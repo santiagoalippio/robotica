@@ -1,28 +1,12 @@
 import cv2
 import struct
-def detectar_camara_valida():
-    print("🔍 Buscando cámara externa (no la integrada)...")
-
-    for i in [2, 1]:  # Evitar usar cámara 0 (Mac integrada)
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            ret, frame = cap.read()
-            if ret and frame is not None and frame.shape[0] > 0 and frame.shape[1] > 0:
-                print(f"✅ Cámara externa {i} está funcionando.")
-                cap.release()
-                return i
-            else:
-                print(f"⚠️ Cámara {i} abierta, pero sin imagen válida.")
-            cap.release()
-        else:
-            print(f"❌ Cámara {i} no se pudo abrir.")
-    return -1  # Ninguna cámara válida encontrada
 import numpy as np
 import os
 import math
 import heapq
 import time
 import traceback
+import socket
 import matplotlib.pyplot as plt
 from io import BytesIO
 
@@ -112,6 +96,24 @@ class ObjectDetector:
             cv2.putText(control_image, text, (10, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
         cv2.imshow(self.controls_window_name, control_image)
         self._windows_set_up = True
+
+    def detectar_camara_valida(self):
+        print("🔍 Buscando cámara externa (no la integrada)...")
+
+        for i in [2, 1]:  # Evitar usar cámara 0 (Mac integrada)
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret and frame is not None and frame.shape[0] > 0 and frame.shape[1] > 0:
+                    print(f"✅ Cámara externa {i} está funcionando.")
+                    cap.release()
+                    return i
+                else:
+                    print(f"⚠️ Cámara {i} abierta, pero sin imagen válida.")
+                cap.release()
+            else:
+                print(f"❌ Cámara {i} no se pudo abrir.")
+        return -1  # Ninguna cámara válida encontrada
 
     def start_camera(self):
         print(f"{time.time():.4f}: Entrando a start_camera")
@@ -228,9 +230,6 @@ class ObjectDetector:
         if self._windows_set_up:
             cv2.setTrackbarPos("Blur Kernel",self.controls_window_name,self.params['blur_kernel']);cv2.setTrackbarPos("Threshold",self.controls_window_name,self.params['threshold_value']);cv2.setTrackbarPos("Min Area",self.controls_window_name,self.params['min_area']);cv2.setTrackbarPos("Max Area",self.controls_window_name,self.params['max_area']//10);cv2.setTrackbarPos("Aspect Min x10",self.controls_window_name,int(self.params['aspect_ratio_min']*10));cv2.setTrackbarPos("Aspect Max x10",self.controls_window_name,int(self.params['aspect_ratio_max']*10));cv2.setTrackbarPos("Morph Kernel",self.controls_window_name,self.params['morph_kernel']);cv2.setTrackbarPos("Morph Iter",self.controls_window_name,self.params['morph_iterations'])
         self._trigger_reprocess(replan=True);print("Parámetros de detección de obstáculos reseteados.")
-
-import pickle
-import socket
 
 class ObstacleAvoidanceNavigation(ObjectDetector):
     def enviar_control_por_socket(self, velocidad, angulo, x, y, theta):
