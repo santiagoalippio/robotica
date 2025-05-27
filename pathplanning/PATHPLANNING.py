@@ -250,7 +250,6 @@ class ObstacleAvoidanceNavigation(ObjectDetector):
     # Función para enviar datos de control al robot a través de un socket
     def enviar_control_por_socket(self, velocidad, angulo, x, y, theta):
         try:
-            import math
             if not hasattr(self, 'sock_ctrl'):
                 self.sock_ctrl = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 self.destino_ctrl = ("172.20.10.10", 8888)  # Puerto del nodo ROS2 receptor
